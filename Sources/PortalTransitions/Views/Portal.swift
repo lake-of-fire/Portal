@@ -27,7 +27,7 @@ public struct Portal<Content: View>: View {
     private let namespace: Namespace.ID
     private let groupID: String?
     @ViewBuilder private let content: Content
-    @Environment(CrossModel.self) private var portalModel
+    @EnvironmentObject private var portalModel: CrossModel
     @Environment(\.portalTransitionDebugSettings) private var debugSettings
 
     /// Initializes a new Portal view.

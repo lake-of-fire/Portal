@@ -22,7 +22,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/Aeastr/Chronicle.git", from: "3.0.1"),
-        .package(url: "https://github.com/Aeastr/UIPortalBridge.git", from: "1.0.0")
+        .package(path: "../UIPortalBridge")
     ],
     targets: [
         .target(
@@ -31,7 +31,8 @@ let package = Package(
                 .product(name: "Chronicle", package: "Chronicle"),
                 .product(name: "ChronicleConsole", package: "Chronicle")
             ],
-            path: "Sources/PortalTransitions"
+            path: "Sources/PortalTransitions",
+            exclude: ["Examples"]
         ),
         .target(
             name: "PortalHeaders",
@@ -47,7 +48,13 @@ let package = Package(
                 "PortalTransitions",
                 .product(name: "UIPortalBridge", package: "UIPortalBridge")
             ],
-            path: "Sources/_PortalPrivate"
+            path: "Sources/_PortalPrivate",
+            exclude: [
+                "PortalPrivateExampleApp.swift",
+                "PortalPrivateExampleNoSheetView.swift",
+                "Transitions/Examples",
+                "View/UIPortalViewExample.swift"
+            ]
         ),
         .testTarget(
             name: "PortalHeadersTests",
