@@ -22,9 +22,16 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/Aeastr/Chronicle.git", from: "3.0.1"),
-        .package(path: "../UIPortalBridge")
+        .package(url: "https://github.com/Aeastr/Obfuscate.git", from: "1.0.0")
     ],
     targets: [
+        .target(
+            name: "UIPortalBridge",
+            dependencies: [
+                .product(name: "Obfuscate", package: "Obfuscate")
+            ],
+            path: "Sources/UIPortalBridge"
+        ),
         .target(
             name: "PortalTransitions",
             dependencies: [
