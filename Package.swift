@@ -53,7 +53,7 @@ let package = Package(
             name: "_PortalPrivate",
             dependencies: [
                 "PortalTransitions",
-                .product(name: "UIPortalBridge", package: "UIPortalBridge")
+                "UIPortalBridge"
             ],
             path: "Sources/_PortalPrivate",
             exclude: [
