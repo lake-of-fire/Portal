@@ -14,7 +14,7 @@ public enum PortalAnimationCompletionCriteria: Sendable {
 }
 
 @MainActor
-internal func portalWithAnimation<Result>(
+public func portalWithAnimation<Result>(
     _ animation: Animation,
     completionCriteria: PortalAnimationCompletionCriteria,
     _ body: () throws -> Result,

@@ -8,6 +8,7 @@
 //  Licensed under the MIT License.
 //
 
+#if canImport(UIKit)
 import UIKit
 import Obfuscate
 
@@ -150,3 +151,4 @@ public class UIPortalView: UIView {
         portalView?.setValue(matchesPosition, forKey: "matchesPosition")
     }
 }
+#endif

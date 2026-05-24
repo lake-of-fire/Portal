@@ -158,7 +158,7 @@ private struct PortalLayerContentView: View {
             ))
             .overlay(
                 Group {
-                    #if DEBUG
+                    #if DEBUG && canImport(UIKit)
                     let layerStyle = debugSettings.style(for: .layer)
                     if !layerStyle.isEmpty {
                         PortalDebugOverlay("Portal Layer", color: .green, showing: layerStyle)

@@ -9,6 +9,8 @@
 //
 
 import SwiftUI
+
+#if canImport(UIKit)
 import UIKit
 
 // MARK: - PortalViewRepresentable
@@ -243,183 +245,166 @@ public struct PortalMirrorView: View {
     }
 }
 
-// MARK: - Previews
+// MARK: - Private Portal Helpers
 
-#Preview("Basic Portal") {
-    struct Example: View {
-        @State private var source = PortalSource()
-        
-        var body: some View {
-            VStack(spacing: 40) {
-                Text("Source:")
-                PortalSourceView(source) {
-                    Text("Hello, World!")
-                        .font(.title)
-                        .padding()
-                        .background(.blue)
-                        .foregroundStyle(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-                
-                Text("Mirror:")
-                PortalMirrorView(source)
-            }
-        }
+/// Container that holds a SwiftUI view in a UIHostingController and exposes the UIView for portaling.
+@MainActor
+public final class SourceViewContainer<Content: View> {
+    let hostingController: UIHostingController<Content>
+
+    public var view: UIView {
+        hostingController.view
     }
-    return Example()
+
+    public init(content: Content) {
+        self.hostingController = UIHostingController(rootView: content)
+        self.hostingController.view.backgroundColor = .clear
+
+        if #available(iOS 16, *) {
+            self.hostingController.sizingOptions = .preferredContentSize
+        }
+
+        hostingController.view.setNeedsLayout()
+    }
+
+    public func update(content: Content) {
+        hostingController.rootView = content
+        hostingController.view.setNeedsLayout()
+    }
 }
 
-#Preview("Multiple Mirrors") {
-    struct Example: View {
-        @State private var source = PortalSource()
-        
-        var body: some View {
-            VStack(spacing: 20) {
-                PortalSourceView(source) {
-                    Text("Original")
-                        .font(.headline)
-                        .padding()
-                        .background(.green)
-                        .clipShape(Capsule())
-                }
-                
-                HStack(spacing: 20) {
-                    PortalMirrorView(source)
-                        .frame(width: 100, height: 50)
-                    
-                    PortalMirrorView(source)
-                        .frame(width: 100, height: 50)
-                        .scaleEffect(x: -1, y: 1)
-                    
-                    PortalMirrorView(source)
-                        .frame(width: 100, height: 50)
-                        .opacity(0.5)
-                }
-            }
-        }
+public final class SourceViewWrapper: UIView {
+    let sourceView: UIView
+
+    public init(sourceView: UIView) {
+        self.sourceView = sourceView
+        super.init(frame: .zero)
+
+        sourceView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(sourceView)
+        NSLayoutConstraint.activate([
+            sourceView.topAnchor.constraint(equalTo: topAnchor),
+            sourceView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            sourceView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            sourceView.trailingAnchor.constraint(equalTo: trailingAnchor)
+        ])
     }
-    return Example()
+
+    public required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    public override var intrinsicContentSize: CGSize {
+        if sourceView.bounds.size.width > 0, sourceView.bounds.size.height > 0 {
+            return sourceView.bounds.size
+        }
+
+        return sourceView.intrinsicContentSize
+    }
+
+    public override func layoutSubviews() {
+        super.layoutSubviews()
+        invalidateIntrinsicContentSize()
+    }
 }
 
+public struct SourceViewRepresentable<Content: View>: UIViewRepresentable {
+    let container: SourceViewContainer<Content>
+    let content: Content
 
-#Preview("Literally Mirrors") {
-    struct Example: View {
-        @State private var sliderValue: Double = 0.5
-        @State private var textValue: String = "Hello"
-        @State private var toggleValue: Bool = true
-        @State private var stepperValue: Int = 5
-        @State private var pickerValue: Int = 0
-
-        @State private var sliderSource = PortalSource()
-        @State private var textFieldSource = PortalSource()
-        @State private var toggleSource = PortalSource()
-        @State private var stepperSource = PortalSource()
-        @State private var pickerSource = PortalSource()
-        @State private var buttonSource = PortalSource()
-
-        var body: some View {
-            ScrollView {
-                VStack(spacing: 30) {
-                    // Slider
-                    MirroredComponent(title: "Slider") {
-                        PortalSourceView(sliderSource) {
-                            Slider(value: $sliderValue)
-                                .frame(width: 200)
-                        }
-                        .border(.red.opacity(0.4))
-                        PortalMirrorView(sliderSource, matchesTransform: false)
-                            .border(.purple.opacity(0.4))
-                            .scaleEffect(y: -1)
-                    }
-
-                    // TextField
-                    MirroredComponent(title: "TextField") {
-                        PortalSourceView(textFieldSource) {
-                            TextField("Type here...", text: $textValue)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 200)
-                        }
-                        .border(.red.opacity(0.4))
-                        PortalMirrorView(textFieldSource, matchesTransform: false)
-                            .border(.purple.opacity(0.4))
-                            .scaleEffect(y: -1)
-                    }
-
-                    // Toggle
-                    MirroredComponent(title: "Toggle") {
-                        PortalSourceView(toggleSource) {
-                            Toggle("Enabled", isOn: $toggleValue)
-                                .frame(width: 200)
-                        }
-                        .border(.red.opacity(0.4))
-                        PortalMirrorView(toggleSource, matchesTransform: false)
-                            .border(.purple.opacity(0.4))
-                            .scaleEffect(y: -1)
-                    }
-
-                    // Stepper
-                    MirroredComponent(title: "Stepper") {
-                        PortalSourceView(stepperSource) {
-                            Stepper("Value: \(stepperValue)", value: $stepperValue, in: 0...10)
-                                .frame(width: 200)
-                        }
-                        .border(.red.opacity(0.4))
-                        PortalMirrorView(stepperSource, matchesTransform: false)
-                            .border(.purple.opacity(0.4))
-                            .scaleEffect(y: -1)
-                    }
-
-                    // Segmented Picker
-                    MirroredComponent(title: "Picker") {
-                        PortalSourceView(pickerSource) {
-                            Picker("Option", selection: $pickerValue) {
-                                Text("One").tag(0)
-                                Text("Two").tag(1)
-                                Text("Three").tag(2)
-                            }
-                            .pickerStyle(.segmented)
-                            .frame(width: 200)
-                        }
-                        .border(.red.opacity(0.4))
-                        PortalMirrorView(pickerSource, matchesTransform: false)
-                            .border(.purple.opacity(0.4))
-                            .scaleEffect(y: -1)
-                    }
-
-                    // Button
-                    MirroredComponent(title: "Button") {
-                        PortalSourceView(buttonSource) {
-                            Button("Tap Me") {}
-                                .buttonStyle(.borderedProminent)
-                        }
-                        .border(.red.opacity(0.4))
-                        PortalMirrorView(buttonSource, matchesTransform: false)
-                            .border(.purple.opacity(0.4))
-                            .scaleEffect(y: -1)
-                    }
-                }
-                .padding()
-            }
-        }
+    public init(container: SourceViewContainer<Content>, content: Content) {
+        self.container = container
+        self.content = content
     }
 
-    struct MirroredComponent<Content: View>: View {
-        let title: String
-        @ViewBuilder let content: Content
-
-        var body: some View {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                VStack(spacing: 0) {
-                    content
-                }
-                .padding()
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-            }
-        }
+    public func makeUIView(context: Context) -> SourceViewWrapper {
+        SourceViewWrapper(sourceView: container.view)
     }
 
-    return Example()
+    public func updateUIView(_ uiView: SourceViewWrapper, context: Context) {
+        container.update(content: content)
+        uiView.invalidateIntrinsicContentSize()
+    }
 }
+
+public struct PortalView<Content: View>: View {
+    let source: SourceViewContainer<Content>
+    var hidesSource: Bool = false
+    var matchesAlpha: Bool = true
+    var matchesTransform: Bool = true
+    var matchesPosition: Bool = true
+
+    public init(
+        source: SourceViewContainer<Content>,
+        hidesSource: Bool = false,
+        matchesAlpha: Bool = true,
+        matchesTransform: Bool = true,
+        matchesPosition: Bool = true
+    ) {
+        self.source = source
+        self.hidesSource = hidesSource
+        self.matchesAlpha = matchesAlpha
+        self.matchesTransform = matchesTransform
+        self.matchesPosition = matchesPosition
+    }
+
+    public var body: some View {
+        PortalViewRepresentable(
+            sourceView: source.view,
+            hidesSourceView: hidesSource,
+            matchesAlpha: matchesAlpha,
+            matchesTransform: matchesTransform,
+            matchesPosition: matchesPosition
+        )
+    }
+}
+
+#else
+public final class SourceViewContainer<Content: View> {
+    public let content: Content
+
+    public init(content: Content) {
+        self.content = content
+    }
+}
+
+public struct PortalView<Content: View>: View {
+    public init(
+        source: SourceViewContainer<Content>,
+        hidesSourceView: Bool = false,
+        matchesAlpha: Bool = true,
+        matchesTransform: Bool = true,
+        matchesPosition: Bool = false
+    ) {}
+
+    public var body: some View {
+        EmptyView()
+    }
+}
+
+public struct SourceViewRepresentable<Content: View>: View {
+    public init(container: SourceViewContainer<Content>, content: Content) {}
+
+    public var body: some View {
+        EmptyView()
+    }
+}
+
+public extension PortalView {
+    init(
+        source: SourceViewContainer<Content>,
+        hidesSource: Bool = false,
+        matchesAlpha: Bool = true,
+        matchesTransform: Bool = true,
+        matchesPosition: Bool = false
+    ) {
+        self.init(
+            source: source,
+            hidesSourceView: hidesSource,
+            matchesAlpha: matchesAlpha,
+            matchesTransform: matchesTransform,
+            matchesPosition: matchesPosition
+        )
+    }
+}
+#endif

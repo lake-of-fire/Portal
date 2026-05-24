@@ -67,7 +67,7 @@ public struct Portal<Content: View>: View {
             .opacity(opacity)
             .overlay(
                 Group {
-                    #if DEBUG
+                    #if DEBUG && canImport(UIKit)
                     let target: PortalTransitionDebugTarget = isSource ? .source : .destination
                     PortalDebugOverlay(isSource ? "Source" : "Destination", color: isSource ? .blue : .orange, showing: debugSettings.style(for: target))
                     #endif

@@ -47,7 +47,8 @@ let package = Package(
                 .product(name: "Chronicle", package: "Chronicle"),
                 .product(name: "ChronicleConsole", package: "Chronicle")
             ],
-            path: "Sources/PortalHeaders"
+            path: "Sources/PortalHeaders",
+            exclude: ["Examples"]
         ),
         .target(
             name: "_PortalPrivate",
