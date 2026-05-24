@@ -1,0 +1,520 @@
+//
+//  OptionalPortalTransitionModifier.swift
+//  Portal
+//
+//  Created by Aether, 2025.
+//
+//  Copyright © 2025 Aether. All rights reserved.
+//  Licensed under the MIT License.
+//
+
+import SwiftUI
+
+/// A view modifier that manages portal transitions based on optional `Identifiable` items.
+///
+/// This modifier automatically handles portal transitions when an optional item changes between
+/// `nil` and a non-`nil` value. It's particularly useful for detail view presentations, modal
+/// transitions, or any scenario where the presence of data determines the transition state.
+///
+/// **Key Features:**
+/// - Automatic ID generation from `Identifiable` items
+/// - State management for optional values
+/// - Lifecycle management with proper cleanup
+/// - Configurable animation and styling
+///
+/// **Usage Pattern:**
+/// The modifier monitors changes to an optional item binding. When the item becomes non-nil,
+/// it initiates a forward portal transition. When the item becomes nil, it initiates a
+/// reverse portal transition with proper cleanup.
+///
+/// **Example Scenario:**
+/// ```swift
+/// @State private var selectedPhoto: Photo? = nil
+///
+/// PhotoGridView()
+///     .portalTransition(item: $selectedPhoto) { photo in
+///         AsyncImage(url: photo.fullSizeURL)
+///             .aspectRatio(contentMode: .fit)
+///     }
+/// ```
+public struct OptionalPortalTransitionModifier<Item: Identifiable, LayerView: View>: ViewModifier {
+    /// Binding to the optional item that controls the portal transition.
+    ///
+    /// When this value changes from `nil` to non-`nil`, a forward portal transition
+    /// is initiated. When it changes from non-`nil` to `nil`, a reverse transition
+    /// with cleanup is performed.
+    @Binding public var item: Item?
+
+    /// Namespace for scoping this portal transition.
+    /// Transitions only match portals within the same namespace.
+    public let namespace: Namespace.ID
+
+    /// Animation to use for the transition.
+    public let animation: Animation
+
+    /// Configuration for customizing the layer view during animation.
+    /// See ``PortalConfiguration`` for the three levels of control available.
+    public let configuration: PortalConfiguration?
+
+    /// Controls fade-out behavior when the portal layer is removed.
+    public let transition: PortalRemoveTransition
+
+    /// Completion criteria for detecting when the animation finishes.
+    public let completionCriteria: AnimationCompletionCriteria
+
+    /// Closure that generates the layer view for the transition animation.
+    ///
+    /// This closure receives the unwrapped item and returns the view that will
+    /// be animated during the portal transition. The view should represent the
+    /// visual content that bridges the source and destination views.
+    public let layerView: (Item) -> LayerView
+
+    /// Completion handler called when the transition finishes.
+    ///
+    /// Called with `true` when the transition completes successfully, or `false`
+    /// when the transition is cancelled or fails. This allows for additional
+    /// UI updates or state changes after the portal animation.
+    public let completion: (Bool) -> Void
+
+    /// The shared portal model that manages all portal animations.
+    @Environment(CrossModel.self) private var portalModel
+
+    /// Tracks the last generated key to handle cleanup during reverse transitions.
+    ///
+    /// Since the item becomes `nil` during reverse transitions, we need to remember
+    /// the last key to properly clean up the portal state.
+    @State private var lastKey: AnyHashable?
+
+    /// Initializes a new optional portal transition modifier with direct parameters.
+    ///
+    /// - Parameters:
+    ///   - item: Binding to the optional item that controls the transition
+    ///   - namespace: Namespace for scoping this portal transition
+    ///   - animation: Animation to use for the transition
+    ///   - transition: Fade-out behavior for layer removal
+    ///   - completionCriteria: How to detect animation completion
+    ///   - completion: Handler called when the transition completes
+    ///   - layerView: Closure that generates the transition layer view
+    ///   - configuration: Optional closure to customize the layer view during animation
+    public init(
+        item: Binding<Item?>,
+        in namespace: Namespace.ID,
+        animation: Animation = PortalConstants.defaultAnimation,
+        transition: PortalRemoveTransition = .none,
+        completionCriteria: AnimationCompletionCriteria = .removed,
+        completion: @escaping (Bool) -> Void,
+        @ViewBuilder layerView: @escaping (Item) -> LayerView,
+        configuration: PortalConfiguration? = nil
+    ) {
+        self._item = item
+        self.namespace = namespace
+        self.animation = animation
+        self.transition = transition
+        self.completionCriteria = completionCriteria
+        self.completion = completion
+        self.layerView = layerView
+        self.configuration = configuration
+
+        // Validate animation duration
+        Self.validateAnimationDuration(animation)
+    }
+
+    /// Validates animation duration and logs a warning if it's too short for sheet transitions.
+    private static func validateAnimationDuration(_ animation: Animation) {
+        // Extract duration from animation if possible
+        let mirror = Mirror(reflecting: animation)
+
+        // Try to find duration in the animation's structure
+        if let duration = Self.extractDuration(from: mirror) {
+            if duration < PortalConstants.minimumSheetAnimationDuration {
+                let message = "Portal transition: Animation duration (\(String(format: "%.2f", duration))s) is below recommended minimum (\(String(format: "%.2f", PortalConstants.minimumSheetAnimationDuration))s) for sheet transitions. This may cause visual artifacts."
+
+                // Runtime warning that shows in Xcode console
+                #if DEBUG
+                assertionFailure(message)
+                #endif
+
+                // Also log for non-debug builds
+                PortalLogs.logger.log(
+                    message,
+                    level: .warning,
+                    tags: [PortalLogs.Tags.transition],
+                    metadata: ["duration": String(reflecting: duration), "minimum": String(reflecting: PortalConstants.minimumSheetAnimationDuration)]
+                )
+            }
+        }
+    }
+
+    /// Attempts to extract duration from Animation via reflection.
+    private static func extractDuration(from mirror: Mirror) -> TimeInterval? {
+        // Check direct duration property
+        if let duration = mirror.children.first(where: { $0.label == "duration" })?.value as? TimeInterval {
+            return duration
+        }
+
+        // Recursively check nested children (for wrapped animations)
+        for child in mirror.children {
+            let nestedMirror = Mirror(reflecting: child.value)
+            if let duration = extractDuration(from: nestedMirror) {
+                return duration
+            }
+        }
+
+        return nil
+    }
+
+    /// Generates a key from the current item's ID.
+    ///
+    /// Returns `nil` when the item is `nil`, or the item's ID wrapped in `AnyHashable`
+    /// when the item is present. This key is used to identify the portal in the
+    /// global portal model.
+    private var key: AnyHashable? {
+        guard let value = item else { return nil }
+        return AnyHashable(value.id)
+    }
+
+    /// Handles changes to the item's presence, triggering appropriate portal transitions.
+    ///
+    /// This method is called whenever the item binding changes between `nil` and non-`nil`
+    /// values. It manages the complete lifecycle of portal transitions, including
+    /// initialization, animation, and cleanup.
+    ///
+    /// **Forward Transition (hasValue = true):**
+    /// 1. Generates portal key from item ID
+    /// 2. Creates or retrieves portal info in the model
+    /// 3. Configures animation and layer view
+    /// 4. Initiates delayed animation with completion handling
+    ///
+    /// **Reverse Transition (hasValue = false):**
+    /// 1. Uses stored lastKey for portal identification
+    /// 2. Initiates reverse animation
+    /// 3. Performs complete cleanup on completion
+    /// 4. Clears the lastKey
+    ///
+    /// - Parameters:
+    ///   - oldValue: Previous value of the hasValue state (unused but required by onChange)
+    ///   - hasValue: Current presence state of the item (true if item is non-nil)
+    private func onChange(oldValue: Bool, hasValue: Bool) {
+        if hasValue {
+            // Forward transition: item became non-nil
+            guard let key = self.key, let unwrapped = item else { return }
+
+            // Store key for potential cleanup
+            lastKey = key
+
+            // Ensure portal info exists in the model
+            if !portalModel.info.contains(where: { $0.infoID == key && $0.namespace == namespace }) {
+                portalModel.info.append(PortalInfo(id: key, namespace: namespace))
+                PortalLogs.logger.log(
+                    "Registered new portal info",
+                    level: .debug,
+                    tags: [PortalLogs.Tags.transition],
+                    metadata: ["id": String(reflecting: key)]
+                )
+            }
+
+            guard let idx = portalModel.info.firstIndex(where: { $0.infoID == key && $0.namespace == namespace }) else {
+                PortalLogs.logger.log(
+                    "Portal info lookup failed after registration",
+                    level: .error,
+                    tags: [PortalLogs.Tags.transition],
+                    metadata: ["id": String(reflecting: key)]
+                )
+                return
+            }
+
+            // Configure portal for forward animation
+            portalModel.info[idx].initialized = true
+            portalModel.info[idx].animation = animation
+            portalModel.info[idx].completionCriteria = completionCriteria
+            portalModel.info[idx].configuration = configuration
+            portalModel.info[idx].fade = transition
+            portalModel.info[idx].completion = completion
+            portalModel.info[idx].layerView = AnyView(layerView(unwrapped))
+            portalModel.info[idx].showLayer = true
+
+            PortalLogs.logger.log(
+                "Starting forward portal transition",
+                level: .notice,
+                tags: [PortalLogs.Tags.transition],
+                metadata: [
+                    "id": "\(key)",
+                    "delay_ms": Int(PortalConstants.animationDelay * 1_000)
+                ]
+            )
+
+            // Start animation after delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + PortalConstants.animationDelay) {
+                withAnimation(animation, completionCriteria: completionCriteria) {
+                    portalModel.info[idx].animateView = true
+                } completion: {
+                    PortalLogs.logger.log(
+                        "Animation completed, showing destination",
+                        level: .debug,
+                        tags: [PortalLogs.Tags.transition],
+                        metadata: ["id": String(reflecting: key), "hideView": "true"]
+                    )
+
+                    // Show destination first, then hide layer after ensuring it's rendered
+                    portalModel.info[idx].hideView = true
+
+                    DispatchQueue.main.asyncAfter(deadline: .now()) {
+                        PortalLogs.logger.log(
+                            "Hiding transition layer",
+                            level: .debug,
+                            tags: [PortalLogs.Tags.transition],
+                            metadata: ["id": String(reflecting: key), "showLayer": "false"]
+                        )
+
+                        // Hide layer after destination is visible
+                        portalModel.info[idx].showLayer = false
+
+                        Task { @MainActor in
+                            // Notify completion after handoff
+                            portalModel.info[idx].completion(true)
+                        }
+                    }
+                }
+            }
+        } else {
+            // Reverse transition: item became nil
+            guard let key = lastKey,
+                  let idx = portalModel.info.firstIndex(where: { $0.infoID == key && $0.namespace == namespace })
+            else { return }
+
+            // Prepare for reverse animation
+            portalModel.info[idx].hideView = false
+            portalModel.info[idx].showLayer = true
+
+            PortalLogs.logger.log(
+                "Reversing portal transition",
+                level: .notice,
+                tags: [PortalLogs.Tags.transition],
+                metadata: ["id": String(reflecting: key)]
+            )
+
+            // Start reverse animation
+            withAnimation(animation, completionCriteria: completionCriteria) {
+                portalModel.info[idx].animateView = false
+            } completion: {
+                Task { @MainActor in
+                    // Complete cleanup after reverse animation
+                    portalModel.info[idx].showLayer = false
+                    portalModel.info[idx].initialized = false
+                    portalModel.info[idx].layerView = nil
+                    portalModel.info[idx].sourceAnchor = nil
+                    portalModel.info[idx].destinationAnchor = nil
+                    portalModel.info[idx].completion(false)
+                }
+            }
+
+            // Clear stored key
+            lastKey = nil
+
+            PortalLogs.logger.log(
+                "Completed reverse portal transition cleanup",
+                level: .debug,
+                tags: [PortalLogs.Tags.transition],
+                metadata: ["id": String(reflecting: key)]
+            )
+        }
+    }
+
+    /// Applies the modifier to the content view.
+    ///
+    /// Attaches onChange handlers that monitor both the presence and identity of the item
+    /// and triggers portal transitions accordingly.
+    public func body(content: Content) -> some View {
+        content
+            .onChange(of: item != nil, onChange)
+            .onChange(of: item?.id) { oldID, newID in
+                // Update lastKey and layerView when the item changes to a different item (while remaining non-nil)
+                // This enables carousels where swiping between items should update the return target
+                guard let oldID, let newID, oldID != newID, let newItem = item else { return }
+
+                let newKey = AnyHashable(newID)
+                lastKey = newKey
+
+                // Update the layerView to show the new item's content
+                if let idx = portalModel.info.firstIndex(where: { $0.infoID == newKey && $0.namespace == namespace }) {
+                    portalModel.info[idx].layerView = AnyView(layerView(newItem))
+                }
+
+                PortalLogs.logger.log(
+                    "Portal item changed, updated return target and layer",
+                    level: .debug,
+                    tags: [PortalLogs.Tags.transition],
+                    metadata: ["fromID": String(reflecting: oldID), "toID": String(reflecting: newID)]
+                )
+            }
+    }
+}
+
+public extension View {
+    // MARK: - No Configuration (Default)
+
+    /// Applies a portal transition controlled by an optional `Identifiable` item.
+    ///
+    /// This is the simplest form - frame and offset are applied automatically.
+    ///
+    /// - Parameters:
+    ///   - item: Binding to an optional `Identifiable` item that controls the transition
+    ///   - namespace: The namespace for scoping this portal
+    ///   - animation: Animation to use for the transition
+    ///   - transition: Fade-out behavior for layer removal
+    ///   - completionCriteria: How to detect animation completion
+    ///   - completion: Completion handler
+    ///   - layerView: Closure that receives the item and returns the view to animate
+    /// - Returns: A view with the portal transition modifier applied
+    func portalTransition<Item: Identifiable, LayerView: View>(
+        item: Binding<Item?>,
+        in namespace: Namespace.ID,
+        animation: Animation = PortalConstants.defaultAnimation,
+        transition: PortalRemoveTransition = .none,
+        completionCriteria: AnimationCompletionCriteria = .removed,
+        completion: @escaping (Bool) -> Void = { _ in },
+        @ViewBuilder layerView: @escaping (Item) -> LayerView
+    ) -> some View {
+        self.modifier(
+            OptionalPortalTransitionModifier(
+                item: item,
+                in: namespace,
+                animation: animation,
+                transition: transition,
+                completionCriteria: completionCriteria,
+                completion: completion,
+                layerView: layerView,
+                configuration: nil
+            )
+        )
+    }
+
+    // MARK: - Level 1: Styling Only
+
+    /// Applies a portal transition with styling-only configuration.
+    ///
+    /// Modify appearance (clips, shadows, etc.) without affecting positioning.
+    /// Frame and offset are applied automatically AFTER your configuration.
+    ///
+    /// ```swift
+    /// .portalTransition(item: $item, in: namespace) { item in
+    ///     ItemView(item: item)
+    /// } configuration: { content, isActive in
+    ///     content
+    ///         .clipShape(.rect(cornerRadius: isActive ? 20 : 10))
+    ///         .shadow(radius: isActive ? 10 : 2)
+    /// }
+    /// ```
+    func portalTransition<Item: Identifiable, LayerView: View, ConfiguredView: View>(
+        item: Binding<Item?>,
+        in namespace: Namespace.ID,
+        animation: Animation = PortalConstants.defaultAnimation,
+        transition: PortalRemoveTransition = .none,
+        completionCriteria: AnimationCompletionCriteria = .removed,
+        completion: @escaping (Bool) -> Void = { _ in },
+        @ViewBuilder layerView: @escaping (Item) -> LayerView,
+        @ViewBuilder configuration: @escaping (AnyView, Bool) -> ConfiguredView
+    ) -> some View {
+        self.modifier(
+            OptionalPortalTransitionModifier(
+                item: item,
+                in: namespace,
+                animation: animation,
+                transition: transition,
+                completionCriteria: completionCriteria,
+                completion: completion,
+                layerView: layerView,
+                configuration: .styling { content, isActive in
+                    AnyView(configuration(content, isActive))
+                }
+            )
+        )
+    }
+
+    // MARK: - Level 2: Full Control (Interpolated Values)
+
+    /// Applies a portal transition with full control over layout.
+    ///
+    /// You have complete control and MUST apply frame and offset yourself.
+    /// Receives interpolated size/position based on animation state.
+    ///
+    /// ```swift
+    /// .portalTransition(item: $item, in: namespace) { item in
+    ///     ItemView(item: item)
+    /// } configuration: { content, isActive, size, position in
+    ///     content
+    ///         .frame(width: size.width, height: size.height)
+    ///         .clipShape(.rect(cornerRadius: isActive ? 20 : 10))
+    ///         .offset(x: position.x, y: position.y)
+    /// }
+    /// ```
+    func portalTransition<Item: Identifiable, LayerView: View, ConfiguredView: View>(
+        item: Binding<Item?>,
+        in namespace: Namespace.ID,
+        animation: Animation = PortalConstants.defaultAnimation,
+        transition: PortalRemoveTransition = .none,
+        completionCriteria: AnimationCompletionCriteria = .removed,
+        completion: @escaping (Bool) -> Void = { _ in },
+        @ViewBuilder layerView: @escaping (Item) -> LayerView,
+        @ViewBuilder configuration: @escaping (AnyView, Bool, CGSize, CGPoint) -> ConfiguredView
+    ) -> some View {
+        self.modifier(
+            OptionalPortalTransitionModifier(
+                item: item,
+                in: namespace,
+                animation: animation,
+                transition: transition,
+                completionCriteria: completionCriteria,
+                completion: completion,
+                layerView: layerView,
+                configuration: .full { content, isActive, size, position in
+                    AnyView(configuration(content, isActive, size, position))
+                }
+            )
+        )
+    }
+
+    // MARK: - Level 3: Raw Source/Destination Values
+
+    /// Applies a portal transition with raw source and destination values.
+    ///
+    /// Access both source AND destination sizes/positions for custom interpolation.
+    /// You MUST apply frame and offset yourself.
+    ///
+    /// ```swift
+    /// .portalTransition(item: $item, in: namespace) { item in
+    ///     ItemView(item: item)
+    /// } configuration: { content, isActive, sourceSize, destinationSize, sourcePosition, destinationPosition in
+    ///     let size = isActive ? destinationSize : sourceSize
+    ///     let position = isActive ? destinationPosition : sourcePosition
+    ///     return content
+    ///         .frame(width: size.width, height: size.height)
+    ///         .offset(x: position.x, y: position.y)
+    /// }
+    /// ```
+    func portalTransition<Item: Identifiable, LayerView: View, ConfiguredView: View>(
+        item: Binding<Item?>,
+        in namespace: Namespace.ID,
+        animation: Animation = PortalConstants.defaultAnimation,
+        transition: PortalRemoveTransition = .none,
+        completionCriteria: AnimationCompletionCriteria = .removed,
+        completion: @escaping (Bool) -> Void = { _ in },
+        @ViewBuilder layerView: @escaping (Item) -> LayerView,
+        @ViewBuilder configuration: @escaping (AnyView, Bool, CGSize, CGSize, CGPoint, CGPoint) -> ConfiguredView
+    ) -> some View {
+        self.modifier(
+            OptionalPortalTransitionModifier(
+                item: item,
+                in: namespace,
+                animation: animation,
+                transition: transition,
+                completionCriteria: completionCriteria,
+                completion: completion,
+                layerView: layerView,
+                configuration: .raw { content, isActive, sourceSize, destinationSize, sourcePosition, destinationPosition in
+                    AnyView(configuration(content, isActive, sourceSize, destinationSize, sourcePosition, destinationPosition))
+                }
+            )
+        )
+    }
+}
