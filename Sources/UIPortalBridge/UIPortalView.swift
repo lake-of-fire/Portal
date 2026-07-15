@@ -10,7 +10,22 @@
 
 #if canImport(UIKit)
 import UIKit
-import Obfuscate
+
+let portalViewClassName: String = {
+    // UTF-8 bytes of the Base64 representation of "_UIPortalView".
+    let base64Bytes: [UInt8] = [
+        88, 49, 86, 74, 85, 71, 57, 121, 100, 71,
+        70, 115, 86, 109, 108, 108, 100, 119, 61, 61,
+    ]
+    guard
+        let base64 = String(bytes: base64Bytes, encoding: .utf8),
+        let data = Data(base64Encoded: base64),
+        let className = String(data: data, encoding: .utf8)
+    else {
+        return ""
+    }
+    return className
+}()
 
 // MARK: - UIPortalView Wrapper
 
@@ -117,9 +132,7 @@ public class UIPortalView: UIView {
     }
 
     private func setupPortalView() {
-        let className = #Obfuscate("_UIPortalView")
-
-        guard let portalClass = NSClassFromString(className) as? UIView.Type else {
+        guard let portalClass = NSClassFromString(portalViewClassName) as? UIView.Type else {
             isAvailable = false
 
             let fallbackView = UIView(frame: bounds)

@@ -21,15 +21,12 @@ let package = Package(
             targets: ["_PortalPrivate"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/Aeastr/Chronicle.git", from: "3.0.1"),
-        .package(url: "https://github.com/Aeastr/Obfuscate.git", from: "1.0.0")
+        .package(url: "https://github.com/Aeastr/Chronicle.git", from: "3.0.1")
     ],
     targets: [
         .target(
             name: "UIPortalBridge",
-            dependencies: [
-                .product(name: "Obfuscate", package: "Obfuscate")
-            ],
+            dependencies: [],
             path: "Sources/UIPortalBridge"
         ),
         .target(
@@ -76,7 +73,7 @@ let package = Package(
         ),
         .testTarget(
             name: "_PortalPrivateTests",
-            dependencies: ["_PortalPrivate"],
+            dependencies: ["_PortalPrivate", "UIPortalBridge"],
             path: "Tests/_PortalPrivateTests"
         ),
     ]

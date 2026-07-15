@@ -10,7 +10,22 @@
 
 import SwiftUI
 import UIKit
-import Obfuscate
+
+private let portalViewClassName: String = {
+    // UTF-8 bytes of the Base64 representation of "_UIPortalView".
+    let base64Bytes: [UInt8] = [
+        88, 49, 86, 74, 85, 71, 57, 121, 100, 71,
+        70, 115, 86, 109, 108, 108, 100, 119, 61, 61,
+    ]
+    guard
+        let base64 = String(bytes: base64Bytes, encoding: .utf8),
+        let data = Data(base64Encoded: base64),
+        let className = String(data: data, encoding: .utf8)
+    else {
+        return ""
+    }
+    return className
+}()
 
 // MARK: - Runtime Wrapper for Portal View
 
@@ -102,15 +117,8 @@ public class PortalViewWrapper: UIView {
     }
 
     private func setupPortalView() {
-        // Obfuscated class name using compile-time macro
-        // The #Obfuscate macro converts to a base64-encoded byte array at compile-time,
-        // then decodes it at runtime to prevent direct string matching in the binary.
-        // Note: Obfuscate package is maintained as part of this project
-        // See: https://github.com/Aeastr/Obfuscate
-        let className = #Obfuscate("_UIPortalView")
-
         // Access portal view via runtime with proper error handling
-        guard let portalClass = NSClassFromString(className) as? UIView.Type else {
+        guard let portalClass = NSClassFromString(portalViewClassName) as? UIView.Type else {
             print("⚠️ Portal Warning: Private portal view class not available on iOS \(UIDevice.current.systemVersion)")
             print("⚠️ Portal transitions will fall back to standard behavior")
             isPortalViewAvailable = false
